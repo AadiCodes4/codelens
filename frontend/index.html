@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CodeLens — Semantic Code Search</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1420;
+    --panel: #171d2b;
+    --panel-border: #2a3346;
+    --text: #e7ecf5;
+    --muted: #9aa7bd;
+    --accent: #5fa8ff;
+    --danger: #ff6b6b;
+    --ok: #58d68d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header { padding: 32px 24px 8px; text-align: center; }
+  header h1 { margin: 0 0 6px; font-size: 1.6rem; }
+  header p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+  main { max-width: 820px; margin: 0 auto; padding: 24px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 18px;
+  }
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
+  input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: #0c111c;
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row > div { flex: 1; }
+  button {
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: #05070c;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .status { font-size: 0.85rem; color: var(--muted); margin-top: 10px; }
+  .status.err { color: var(--danger); }
+  .status.ok { color: var(--ok); }
+  .result {
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    background: #0c111c;
+  }
+  .result-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .result-head .name { color: var(--accent); font-weight: 600; }
+  pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  footer { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CodeLens</h1>
+  <p>Semantic code search over a local codebase. No API keys, no GPU, runs fully offline.</p>
+</header>
+<main>
+  <div class="panel">
+    <label>Codebase path to index (on the machine running the backend)</label>
+    <div class="row">
+      <div><input type="text" id="indexPath" placeholder="/path/to/a/repo" /></div>
+      <button id="indexBtn">Build index</button>
+    </div>
+    <div class="status" id="indexStatus"></div>
+  </div>
+
+  <div class="panel">
+    <label>Search query</label>
+    <div class="row">
+      <div><input type="text" id="query" placeholder="e.g. compute the segmentation loss" /></div>
+      <button id="searchBtn">Search</button>
+    </div>
+    <div class="status" id="searchStatus"></div>
+  </div>
+
+  <div id="results"></div>
+</main>
+<footer>
+  CodeLens frontend — a static single-file React app (loaded via CDN, no build step required).
+</footer>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script>
+const API_BASE = window.CODELENS_API_BASE || "http://127.0.0.1:8000";
+
+const indexBtn = document.getElementById("indexBtn");
+const indexPath = document.getElementById("indexPath");
+const indexStatus = document.getElementById("indexStatus");
+const searchBtn = document.getElementById("searchBtn");
+const queryInput = document.getElementById("query");
+const searchStatus = document.getElementById("searchStatus");
+const resultsEl = document.getElementById("results");
+
+function setStatus(el, text, cls) {
+  el.textContent = text;
+  el.className = "status" + (cls ? " " + cls : "");
+}
+
+indexBtn.addEventListener("click", async () => {
+  const path = indexPath.value.trim();
+  if (!path) return;
+  indexBtn.disabled = true;
+  setStatus(indexStatus, "Indexing...", "");
+  try {
+    const resp = await fetch(`${API_BASE}/index`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Index failed");
+    setStatus(
+      indexStatus,
+      `Indexed ${data.num_chunks} chunks from ${data.num_files} files in ${data.build_seconds}s ` +
+        `(vocab ${data.vocabulary_size}, ${data.used_svd ? data.svd_components + " SVD components" : "raw TF-IDF (small corpus)"})`,
+      "ok"
+    );
+  } catch (e) {
+    setStatus(indexStatus, `Failed to reach backend at ${API_BASE}. Is uvicorn running? (${e.message})`, "err");
+  } finally {
+    indexBtn.disabled = false;
+  }
+});
+
+searchBtn.addEventListener("click", async () => {
+  const query = queryInput.value.trim();
+  if (!query) return;
+  searchBtn.disabled = true;
+  setStatus(searchStatus, "Searching...", "");
+  resultsEl.innerHTML = "";
+  try {
+    const resp = await fetch(`${API_BASE}/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, top_k: 8 }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Search failed");
+    setStatus(searchStatus, `${data.num_results} results in ${data.search_seconds}s`, "ok");
+    for (const r of data.results) {
+      const div = document.createElement("div");
+      div.className = "result";
+      div.innerHTML = `
+        <div class="result-head">
+          <span class="name">#${r.rank} ${r.qualname} <span style="color:var(--muted)">(${r.kind})</span></span>
+          <span>score ${r.score} · ${r.file_path}:${r.start_line}-${r.end_line}</span>
+        </div>
+        <pre></pre>
+      `;
+      div.querySelector("pre").textContent = r.text;
+      resultsEl.appendChild(div);
+    }
+  } catch (e) {
+    setStatus(searchStatus, `Failed to reach backend at ${API_BASE}. Is uvicorn running? (${e.message})`, "err");
+  } finally {
+    searchBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
