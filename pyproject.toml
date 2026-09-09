@@ -1,0 +1,15 @@
+[project]
+name = "codelens"
+version = "0.1.0"
+description = "Semantic code search over a local codebase, no external API keys or GPU required."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "scikit-learn>=1.4",
+    "numpy>=1.26",
+    "pydantic>=2.6",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
